@@ -1,0 +1,12 @@
+name: SimpleRegions
+version: 1.0
+main: me.cobeine.regions.bukkit.SimpleRegions
+author: "Cobeine"
+api-version: '1.19'
+description: "Simple Regions plugin as a DevRoom application"
+website: "https://cobeine.vercel.app"
+
+
+commands:
+  region:
+    permission: region.admin
