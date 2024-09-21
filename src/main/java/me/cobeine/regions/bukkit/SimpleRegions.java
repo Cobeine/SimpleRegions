@@ -26,6 +26,8 @@ public class SimpleRegions extends JavaPlugin {
     @Override
     public void onEnable() {
         instance = this;
+        getConfig().options().copyDefaults(true);
+        saveDefaultConfig();
         regionManager = new RegionManager();
         databaseManager = new DatabaseManager(CredentialsRecord.builder()
                 .add(BasicMySQLCredentials.USERNAME, getConfig().getString("mysql.username"))
