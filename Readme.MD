@@ -7,7 +7,7 @@
             super(name);
         }
 
-        @Override
+        @EventHandler()
         public void onHandle(Event event) {
             BukkitRegion region = getRegion(location);
             switch (region.getFlagSetting(this)) {
