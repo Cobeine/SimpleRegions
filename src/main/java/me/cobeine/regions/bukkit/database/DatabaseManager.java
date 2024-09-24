@@ -8,9 +8,10 @@ import me.cobeine.regions.bukkit.region.serializers.LocationSerializer;
 import me.cobeine.regions.bukkit.region.serializers.WhitelistSerializer;
 import me.cobeine.sqlava.connection.auth.CredentialsRecord;
 import me.cobeine.sqlava.connection.database.MySQLConnection;
-import me.cobeine.sqlava.connection.database.query.PreparedQuery;
-import me.cobeine.sqlava.connection.database.query.Query;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
@@ -20,83 +21,82 @@ import java.util.UUID;
  */
 @Getter
 public class DatabaseManager {
-    private MySQLConnection connection;
-    private String tableName = "regions";
+    private final MySQLConnection connection;
+    private final String tableName = "regions";
     public DatabaseManager(CredentialsRecord record) {
         this.connection = new MySQLConnection(record);
         connection.connect(queryHandler -> {
             if (queryHandler.getException().isPresent()) {
-                queryHandler.getException().get().printStackTrace();;
+                connection.getLogger().severe(queryHandler.getException().get().getMessage());
                 return;
             }
-            connection.getTableCommands().createTable(new RegionTable(tableName));
+            try (PreparedStatement statement = getHikariConnection()
+                    .prepareStatement("CREATE TABLE IF NOT EXISTS `"+ tableName +"` " +
+                            "(`id` VARCHAR(128) UNIQUE , `name` TEXT, `pos1` TEXT, " +
+                            "`pos2` TEXT, `flags` LONGTEXT, `whitelisted` LONGTEXT, PRIMARY KEY (`id`))")) {
+                statement.executeUpdate();
+            } catch (Exception e) {
+                connection.getLogger().severe(e.getMessage());
+            }
         });
     }
 
+    public Connection getHikariConnection() {
+        try {
+            return connection.getConnection().getConnection();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
     public void loadRegions(RegionManager manager) {
-        getConnection().prepareStatement(Query.select(getTableName())).executeQueryAsync(queryHandler -> {
-            if (queryHandler.getException().isPresent()) {
-                queryHandler.getException().get().printStackTrace();;
-                return;
-            }
-            queryHandler.getResult().ifPresent(resultSet -> {
-                try {
-                    while (resultSet.next()) {
-                        String id = resultSet.getString("id");
-                        String name = resultSet.getString("name");
-                        String pos1 = resultSet.getString("pos1");
-                        String pos2 = resultSet.getString("pos2");
-                        String flags = resultSet.getString("flags");
-                        String whitelisted = resultSet.getString("whitelisted");
-                        BukkitRegion region = BukkitRegion.deserialize(UUID.fromString(id),name, pos1, pos2, flags, whitelisted);
-                        manager.addRegion(region);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
+        getConnection().getPool().submit(() -> {
+            try (PreparedStatement statement = getHikariConnection().prepareStatement("SELECT * FROM " + getTableName())) {
+               ResultSet resultSet = statement.executeQuery();
+                while (resultSet.next()) {
+                    String id = resultSet.getString("id");
+                    String name = resultSet.getString("name");
+                    String pos1 = resultSet.getString("pos1");
+                    String pos2 = resultSet.getString("pos2");
+                    String flags = resultSet.getString("flags");
+                    String whitelisted = resultSet.getString("whitelisted");
+                    BukkitRegion region = BukkitRegion.deserialize(UUID.fromString(id),name, pos1, pos2, flags, whitelisted);
+                    manager.addRegion(region);
                 }
-            });
+            } catch (Exception e) {
+                connection.getLogger().severe(e.getMessage());
+            }
         });
     }
 
-    public void saveRegions(RegionManager regionManager) throws SQLException {
+    public void saveRegions(RegionManager regionManager) {
         List<BukkitRegion> regions = regionManager.getRegions();
         if (regions.isEmpty()) {
             return;
         }
-        final BukkitRegion first = regions.get(0);
-        regions.remove(0);
-        String queryText = "INSERT INTO " + tableName + " VALUES (?, ?, ?, ?, ?, ?)" +
-                " ON DUPLICATE KEY UPDATE name = ?, pos1 = ?, pos2 = ?, flags = ?, whitelisted = ?";
-        PreparedQuery query = getConnection().prepareStatement(queryText)
-                .setParameter(1, first.getUuid().toString())
-                .setParameter(2, first.getName())
-                .setParameter(3, LocationSerializer.serialize(first.getVertices()[0]))
-                .setParameter(4, LocationSerializer.serialize(first.getVertices()[1]))
-                .setParameter(5, FlagsSerializer.serialize(first.getFlags()))
-                .setParameter(6, WhitelistSerializer.serialize(first.getWhitelisted()))
-                .setParameter(7, first.getName())
-                .setParameter(8, LocationSerializer.serialize(first.getVertices()[0]))
-                .setParameter(9, LocationSerializer.serialize(first.getVertices()[1]))
-                .setParameter(10, FlagsSerializer.serialize(first.getFlags()))
-                .setParameter(11, WhitelistSerializer.serialize(first.getWhitelisted()));
+        String queryText = "INSERT INTO " + tableName + " (id, name, pos1, pos2, flags, whitelisted) VALUES (?, ?, ?, ?, ?, ?)" +
+                " ON DUPLICATE KEY UPDATE " +
+                "name= VALUES(name), pos1 = VALUES(pos1), pos2 = VALUES(pos2), flags = VALUES(flags), whitelisted = VALUES(whitelisted)";
+            try(PreparedStatement statement = getHikariConnection().prepareStatement(queryText)) {
+                for (BukkitRegion region : regions) {
+                    String uuid = region.getUuid().toString();
+                    String name = region.getName();
+                    String pos1 = LocationSerializer.serialize(region.getVertices()[0]);
+                    String pos2 = LocationSerializer.serialize(region.getVertices()[1]);
+                    String flags = FlagsSerializer.serialize(region.getFlags());
+                    String whitelisted = WhitelistSerializer.serialize(region.getWhitelisted());
+                    statement.setString(1, uuid);
+                    statement.setString(2, name);
+                    statement.setString(3, pos1);
+                    statement.setString(4, pos2);
+                    statement.setString(5, flags);
+                    statement.setString(6, whitelisted);
 
-        if (regions.isEmpty()) {
-            query.executeUpdate();
-            getConnection().closeConnection();
-            return;
-        }
-        for (BukkitRegion region : regions) {
-            Query batchQuery = Query.insert(getTableName())
-                    .value("id", region.getUuid().toString())
-                    .value("name", region.getName())
-                    .value("pos1", LocationSerializer.serialize(region.getVertices()[0]))
-                    .value("pos2", LocationSerializer.serialize(region.getVertices()[1]))
-                    .value("flags", FlagsSerializer.serialize(region.getFlags()))
-                    .value("whitelisted", WhitelistSerializer.serialize(region.getWhitelisted()))
-                    .onDuplicateKeyUpdate();
-            query.addBatch(batchQuery.build());
-
-        }
-        query.executeBatch();
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+                getConnection().closeConnection();
+            } catch (Exception e) {
+               getConnection().getLogger().severe(e.getMessage());
+            }
     }
 }

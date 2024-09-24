@@ -6,7 +6,6 @@ import me.cobeine.regions.bukkit.commands.RegionsCommand;
 import me.cobeine.regions.bukkit.database.DatabaseManager;
 import me.cobeine.regions.bukkit.listener.RegionListener;
 import me.cobeine.regions.bukkit.region.RegionManager;
-import me.cobeine.regions.bukkit.region.cuboid.BukkitRegion;
 import me.cobeine.sqlava.connection.auth.BasicMySQLCredentials;
 import me.cobeine.sqlava.connection.auth.CredentialsRecord;
 import me.cobeine.sqlava.connection.util.JdbcUrlBuilder;
@@ -49,11 +48,7 @@ public class SimpleRegions extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        try {
-            databaseManager.saveRegions(regionManager);
-        } catch (Exception ignored) {
-
-        }
+        databaseManager.saveRegions(regionManager);
         instance = null;
     }
 }
